@@ -3,9 +3,9 @@
 ## 分支边界
 
 - `main` 只镜像 `Wei-Shaw/sub2api` 官方 `main`，禁止直接提交定制代码。
-- `mali` 是长期定制和候选构建分支。
+- `mali` 是唯一的日常定制和候选构建分支，完成检查后直接提交并推送。
 - `sync/upstream-*` 只用于把新的官方 Release 合入 `mali`。
-- 功能开发从 `mali` 创建短分支，通过 PR 合并。
+- 日常功能开发不要求创建分支或 PR；只有大型实验才按需使用临时分支。
 
 ## 项目事实
 
@@ -16,10 +16,9 @@
 
 ## 验证命令
 
-- 后端单元测试：`cd backend && make test-unit`
-- 后端集成测试：`cd backend && make test-integration`
-- 前端检查：`pnpm --dir frontend install --frozen-lockfile && make test-frontend`
-- 完整镜像：`docker build -t sub2api-mali:local .`
+- 本机优先执行与改动相关的快速检查。
+- 完整 Go 测试、前端测试、安全扫描和 `linux/amd64` 镜像构建由 GitHub Actions 执行。
+- 本机资源足够且确有需要时，才运行 `docker build -t sub2api-mali:local .`。
 
 ## 修改规则
 
