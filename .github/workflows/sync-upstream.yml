@@ -1,0 +1,159 @@
+name: 同步 Sub2API 官方 Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 留空时自动使用官方最新 Release
+        required: false
+        type: string
+  schedule:
+    - cron: "17 2 * * *"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync-sub2api-upstream
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPOSITORY: Wei-Shaw/sub2api
+
+jobs:
+  sync:
+    name: 准备官方升级 PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: mali
+          fetch-depth: 0
+
+      - name: 配置 Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
+          git fetch upstream main --tags
+          git fetch origin main mali
+
+      - name: 读取目标 Release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          tag="$REQUESTED_TAG"
+          if [[ -z "$tag" ]]; then
+            tag="$(gh api "repos/${UPSTREAM_REPOSITORY}/releases/latest" --jq .tag_name)"
+          fi
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "官方 Release 标签格式无效：$tag" >&2
+            exit 1
+          }
+          git rev-parse "${tag}^{}" >/dev/null
+          source .mali/upstream.env
+          version="${tag#v}"
+          python3 - "$UPSTREAM_RELEASE" "$tag" <<'PY'
+          import sys
+
+          current = tuple(int(part) for part in sys.argv[1].removeprefix("v").split("."))
+          target = tuple(int(part) for part in sys.argv[2].removeprefix("v").split("."))
+          if target < current:
+              raise SystemExit(
+                  f"拒绝降级：当前基线 {sys.argv[1]}，目标 {sys.argv[2]}"
+              )
+          PY
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "commit=$(git rev-parse "${tag}^{}")"
+            echo "branch=sync/upstream-${version//./-}"
+            if [[ "$tag" == "$UPSTREAM_RELEASE" ]]; then
+              echo "changed=false"
+            else
+              echo "changed=true"
+            fi
+          } >> "$GITHUB_OUTPUT"
+
+      - name: 安全快进官方镜像分支
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor origin/main upstream/main || {
+            echo "fork main 无法安全快进到官方 main，请人工检查。" >&2
+            exit 1
+          }
+          git push origin upstream/main:main
+
+      - name: 创建升级分支
+        if: steps.release.outputs.changed == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_COMMIT: ${{ steps.release.outputs.commit }}
+          SYNC_BRANCH: ${{ steps.release.outputs.branch }}
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --heads origin "$SYNC_BRANCH" >/dev/null 2>&1; then
+            echo "升级分支已存在：$SYNC_BRANCH，请继续处理已有 PR。" >&2
+            exit 1
+          fi
+          git switch -c "$SYNC_BRANCH" origin/mali
+          if ! git merge --no-ff --no-edit "$RELEASE_TAG"; then
+            git merge --abort
+            echo "合并官方 $RELEASE_TAG 出现冲突，需要在本地人工处理。" >&2
+            exit 1
+          fi
+          python3 - "$RELEASE_TAG" "$RELEASE_VERSION" "$RELEASE_COMMIT" <<'PY'
+          from pathlib import Path
+          import sys
+
+          tag, version, commit = sys.argv[1:]
+          path = Path(".mali/upstream.env")
+          values = {
+              "UPSTREAM_REPOSITORY": "Wei-Shaw/sub2api",
+              "UPSTREAM_RELEASE": tag,
+              "UPSTREAM_COMMIT": commit,
+              "CUSTOM_RELEASE": f"{version}-ops.1",
+          }
+          path.write_text(
+              "".join(f"{key}={value}\n" for key, value in values.items()),
+              encoding="utf-8",
+          )
+          PY
+          git add .mali/upstream.env
+          git commit -m "chore: 同步 Sub2API ${RELEASE_TAG}"
+          git push -u origin "$SYNC_BRANCH"
+
+      - name: 创建草稿 PR
+        if: steps.release.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          SYNC_BRANCH: ${{ steps.release.outputs.branch }}
+        run: |
+          gh pr create \
+            --base mali \
+            --head "$SYNC_BRANCH" \
+            --draft \
+            --title "chore: 同步 Sub2API ${RELEASE_TAG}" \
+            --body "自动合入官方 ${RELEASE_TAG}。合并前必须完成 CI、候选镜像和本地业务验收。"
+
+      - name: 写入摘要
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          CHANGED: ${{ steps.release.outputs.changed }}
+        run: |
+          {
+            echo "## Sub2API 官方同步"
+            echo
+            echo "- 目标：\`$RELEASE_TAG\`"
+            if [[ "$CHANGED" == "true" ]]; then
+              echo "- 结果：已创建同步分支和草稿 PR"
+            else
+              echo "- 结果：当前定制分支已基于该 Release，无需创建 PR"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
