@@ -34,7 +34,11 @@ jobs:
           [[ "$UPSTREAM_RELEASE" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           [[ "$UPSTREAM_COMMIT" =~ ^[0-9a-f]{40}$ ]]
           [[ "$CUSTOM_RELEASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+-ops\.[1-9][0-9]*$ ]]
-          test "$(git rev-parse "${UPSTREAM_RELEASE}^{}")" = "$UPSTREAM_COMMIT"
+          git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
+          git fetch --force upstream \
+            "refs/tags/${UPSTREAM_RELEASE}:refs/tags/${UPSTREAM_RELEASE}"
+          test "$(git rev-parse "${UPSTREAM_RELEASE}^{commit}")" = "$UPSTREAM_COMMIT"
+          git merge-base --is-ancestor "$UPSTREAM_COMMIT" HEAD
 
   image:
     name: 构建 linux/amd64 镜像
