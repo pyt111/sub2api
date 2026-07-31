@@ -108,8 +108,8 @@ jobs:
         run: |
           set -euo pipefail
           if git ls-remote --exit-code --heads origin "$SYNC_BRANCH" >/dev/null 2>&1; then
-            echo "升级分支已存在：$SYNC_BRANCH，请继续处理已有 PR。" >&2
-            exit 1
+            echo "升级分支已存在：$SYNC_BRANCH，继续检查 PR。"
+            exit 0
           fi
           git switch -c "$SYNC_BRANCH" origin/mali
           if ! git merge --no-ff --no-edit "$RELEASE_TAG"; then
@@ -145,12 +145,41 @@ jobs:
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
           SYNC_BRANCH: ${{ steps.release.outputs.branch }}
         run: |
-          gh pr create \
-            --base mali \
-            --head "$SYNC_BRANCH" \
-            --draft \
-            --title "chore: 同步 Sub2API ${RELEASE_TAG}" \
-            --body "自动合入官方 ${RELEASE_TAG}。合并前必须完成 CI、候选镜像和本地业务验收。"
+          set -euo pipefail
+          for attempt in 1 2 3 4 5; do
+            existing="$(
+              gh pr list \
+                --base mali \
+                --head "$SYNC_BRANCH" \
+                --state open \
+                --json url \
+                --jq '.[0].url // empty'
+            )"
+            if [[ -n "$existing" ]]; then
+              echo "升级 PR 已存在：$existing"
+              exit 0
+            fi
+
+            if url="$(
+              gh pr create \
+                --base mali \
+                --head "$SYNC_BRANCH" \
+                --draft \
+                --title "chore: 同步 Sub2API ${RELEASE_TAG}" \
+                --body "自动合入官方 ${RELEASE_TAG}。合并前必须完成 CI、候选镜像和本地业务验收。" \
+                2>pr-create-error.log
+            )"; then
+              echo "已创建升级 PR：$url"
+              exit 0
+            fi
+
+            if [[ "$attempt" == "5" ]]; then
+              cat pr-create-error.log >&2
+              exit 1
+            fi
+            echo "GitHub 尚未识别新分支，3 秒后重试（$attempt/5）。"
+            sleep 3
+          done
 
       - name: 写入摘要
         env:
