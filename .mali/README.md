@@ -20,6 +20,9 @@
 
 当前基线和定制版本见 `upstream.env`。
 
+同步工作流使用仓库 Secret `UPSTREAM_SYNC_TOKEN`。令牌必须能够写入
+`pyt111/sub2api` 的代码、Pull Request 和 Workflows；令牌内容不得提交到仓库。
+
 ## 定制清单
 
 - `0.1.168-ops.2`：版本检查忽略 `-ops.*` 定制后缀，同一官方基线不再误报升级。
