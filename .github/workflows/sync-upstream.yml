@@ -149,6 +149,7 @@ jobs:
           for attempt in 1 2 3 4 5; do
             existing="$(
               gh pr list \
+                --repo "$GITHUB_REPOSITORY" \
                 --base mali \
                 --head "$SYNC_BRANCH" \
                 --state open \
@@ -162,6 +163,7 @@ jobs:
 
             if url="$(
               gh pr create \
+                --repo "$GITHUB_REPOSITORY" \
                 --base mali \
                 --head "$SYNC_BRANCH" \
                 --draft \
@@ -177,7 +179,7 @@ jobs:
               cat pr-create-error.log >&2
               exit 1
             fi
-            echo "GitHub 尚未识别新分支，3 秒后重试（$attempt/5）。"
+            echo "GitHub 尚未准备好创建 PR，3 秒后重试（$attempt/5）。"
             sleep 3
           done
 
